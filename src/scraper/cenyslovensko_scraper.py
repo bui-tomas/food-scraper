@@ -1,9 +1,9 @@
 import asyncio
 from playwright.async_api import async_playwright
 from tqdm.asyncio import tqdm
-from database import Database
 import random
 import re
+from .config import CATEGORIES
 
 class FoodScraper():
     '''
@@ -231,8 +231,7 @@ class FoodScraper():
                 for item in all_urls:
                     f.write(f"{item}\n")
 
-            print(f'✅ Total product pages to scrape: {len(all_urls)}')
-            print(f'{"-"*60}')
+            print(f'✅ Total product pages to scrape: {len(all_urls)}\n')
 
             # Scrape data from pages in parallel
             print('📦 Scraping product data...')
@@ -245,17 +244,6 @@ class FoodScraper():
                 product_data = await coro
                 if product_data:
                     all_products.append(product_data)
-            
-            # Save to database
-            with Database() as db:
-                total_saved = 0
-                for product_retailers in all_products:
-                    if product_retailers:
-                        category = product_retailers[0].get('category', 'unknown')
-                        saved = db.save_scraped_data(product_retailers, category)
-                        total_saved += saved
-            
-            print(f'✅ Saved {total_saved} prices to database')
 
             if not self.headless:
                 input('\nPress Enter to close browser...')
@@ -264,13 +252,5 @@ class FoodScraper():
             return all_products
                     
 if __name__ == '__main__':
-    scraper = FoodScraper([
-        'https://cenyslovensko.sk/kategoria/1/chlieb-a-pecivo',
-        'https://cenyslovensko.sk/kategoria/2/mliecne-vyrobky-a-vajcia',
-        'https://cenyslovensko.sk/kategoria/3/maso-a-masove-vyrobky',
-        'https://cenyslovensko.sk/kategoria/4/zelenina-a-ovocie', 
-        'https://cenyslovensko.sk/kategoria/5/trvanlive-potraviny-a-jedla',
-        'https://cenyslovensko.sk/kategoria/6/specialne-potraviny'
-    ], True)
-    
+    scraper = FoodScraper(CATEGORIES, True)
     all_products = asyncio.run(scraper.scrape_page())
