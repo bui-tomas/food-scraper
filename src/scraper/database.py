@@ -222,5 +222,3 @@ class Database:
             total_saved += saved_count
         
         return total_saved
-        
-        return total_saved
