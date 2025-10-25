@@ -3,7 +3,7 @@ from playwright.async_api import async_playwright
 from tqdm.asyncio import tqdm
 import random
 import re
-from .config import CATEGORIES
+from .config import CATEGORIES, TEST_CATEGORIES
 
 class FoodScraper():
     '''
@@ -16,59 +16,66 @@ class FoodScraper():
 
     async def scrape_urls(self, page, base_url):
         '''
-        Returns all individual product URLs for given category
+        Returns all individual product URLs for given category.
         '''
-        parts = base_url.rstrip("/").split("/")
-        cat = parts[-1]
-
-        product_urls = []
-
-        # Find page count
-        pagination_count = await page.locator('button[aria-label^="Stránka"]').count()
-        if pagination_count == 0:
-            return None
-
-        last_button = page.locator('button[aria-label^="Stránka"]').nth(-1)
-        aria_label = await last_button.get_attribute('aria-label')
-            
-        match = re.search(r'Stránka (\d+)', aria_label)
-        if match:
-            total_pages = int(match.group(1))
-        else:
-            return None
         
-        # Collect product URLs from pages
-        for page_num in range(1, total_pages + 1):
-            if 'currentPage=' in base_url:
-                url = re.sub(r'currentPage=\d+', f'currentPage={page_num}', base_url)
+        try:
+            parts = base_url.rstrip("/").split("/")
+            cat = parts[-1]
+
+            product_urls = []
+
+            # Find page count
+            pagination_count = await page.locator('button[aria-label^="Stránka"]').count()
+            if pagination_count == 0:
+                return None
+
+            last_button = page.locator('button[aria-label^="Stránka"]').nth(-1)
+            aria_label = await last_button.get_attribute('aria-label')
+                
+            match = re.search(r'Stránka (\d+)', aria_label)
+            if match:
+                total_pages = int(match.group(1))
             else:
-                separator = '&' if '?' in base_url else '?'
-                url = f'{base_url}{separator}currentPage={page_num}'
+                return None
             
-            await page.goto(url, wait_until='commit')
-            await page.wait_for_selector('div.sc-jvKoal.gTWuXg', timeout=10000)
+            # Collect product URLs from pages
+            for page_num in range(1, total_pages + 1):
+                if 'currentPage=' in base_url:
+                    url = re.sub(r'currentPage=\d+', f'currentPage={page_num}', base_url)
+                else:
+                    separator = '&' if '?' in base_url else '?'
+                    url = f'{base_url}{separator}currentPage={page_num}'
+                
+                await page.goto(url, wait_until='commit')
+                await page.wait_for_selector('div.sc-jvKoal.gTWuXg', timeout=10000)
 
-            products = await page.locator('div.sc-jvKoal.gTWuXg').all()
+                products = await page.locator('div.sc-jvKoal.gTWuXg').all()
+                
+                # Extract href from each product
+                for product in products:
+                    link_element = product.locator('a strong').first
+                    parent_link = link_element.locator('..').first
+                    href = await parent_link.get_attribute('href')
+                                    
+                    if href:
+                        if href.startswith('http'):
+                            product_urls.append([href, cat])
+                        else:
+                            base = 'https://cenyslovensko.sk'
+                            product_urls.append([f'{base}{href}', cat])
+
+            return product_urls
             
-            # Extract href from each product
-            for product in products:
-                link_element = product.locator('a strong').first
-                parent_link = link_element.locator('..').first
-                href = await parent_link.get_attribute('href')
-                                
-                if href:
-                    if href.startswith('http'):
-                        product_urls.append([href, cat])
-                    else:
-                        base = 'https://cenyslovensko.sk'
-                        product_urls.append([f'{base}{href}', cat])
-
-        return product_urls
-    
+        except Exception as e:
+            print(f'❌ Error scraping URLs from {base_url}: {e}')
+            return None 
+        
     async def extract_product_data(self, page, product_url):
         '''
         Extract detailed data from individual product page
         '''
+
         async def get_text(locator, selector):
             return (await locator.locator(selector).first.text_content()).strip()
         
@@ -149,6 +156,7 @@ class FoodScraper():
         '''
         Clean and normalize scraped data for database insertion
         '''
+
         cleaned = raw_data.copy()
         
         for field in ['price_with_vat', 'price_without_vat', 'unit_price']:
@@ -189,8 +197,10 @@ class FoodScraper():
     
     async def scrape_product(self, browser, url, semaphore):
         '''
-        Scrape a single product with semaphore control
+        Scrape a single product with semaphore control.
+        Returns tuple: (success: bool, data: list or None, url: tuple)
         '''
+
         async with semaphore:
             await asyncio.sleep(random.uniform(1.0, 1.5))
             page = await browser.new_page()
@@ -198,17 +208,39 @@ class FoodScraper():
                 await page.goto(url[0], wait_until='domcontentloaded')
                 await page.wait_for_selector('button.sc-dTvVRJ.jLGMQZ', state='attached', timeout=15000)
                 product_data = await self.extract_product_data(page, url)
-                return product_data
+                return (True, product_data, url)
             except Exception as e:
-                print(f'Error scraping {url[0]}: {e}')
-                return []
+                return (False, None, url)
             finally:
                 await page.close()
     
+    async def scrape_batch(self, browser, urls, semaphore):
+        '''
+        Scrape a batch of URLs and return successful/failed lists.
+        
+        Returns:
+            tuple: (successful_products, failed_urls)
+        '''
+
+        tasks = [self.scrape_product(browser, url, semaphore) for url in urls]
+        
+        successful_products = []
+        failed_urls = []
+        
+        for coro in tqdm.as_completed(tasks, total=len(urls), desc='Scraping', unit='product'):
+            success, product_data, url = await coro
+            if success and product_data:
+                successful_products.append(product_data)
+            else:
+                failed_urls.append(url)
+        
+        return successful_products, failed_urls
+    
     async def scrape_page(self):
         '''
-        Main async scraping orchestrator
+        Main async scraping orchestrator with retry logic
         '''
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.headless)
             page = await browser.new_page()
@@ -219,38 +251,79 @@ class FoodScraper():
             # Fetch all product urls for all cats
             for cat in self.cats:
                 print(f'Accessing {cat}...')
-                await page.goto(cat, wait_until='domcontentloaded')
-                await page.wait_for_selector('img[alt^="Obrázok produktu"]', state='attached', timeout=10000)
-                urls = await self.scrape_urls(page, cat)
-                if urls:
-                    all_urls.extend(urls)
+                
+                max_attempts = 3
+                urls = None
+                
+                for attempt in range(1, max_attempts + 1):
+                    await page.goto(cat, wait_until='domcontentloaded')
+                    await page.wait_for_selector('img[alt^="Obrázok produktu"]', state='attached', timeout=10000)
+                    
+                    urls = await self.scrape_urls(page, cat)
+                    
+                    if urls:
+                        all_urls.extend(urls)
+                        break
+                    else:
+                        if attempt < max_attempts:
+                            await asyncio.sleep(3)
+                
+                    if not urls:
+                        print(f'🛑 Stopping scraper - cannot continue without all categories')
+                        await page.close()
+                        await browser.close()
+                        return []
 
             await page.close()
-            
-            with open('links.txt', "w", encoding="utf-8") as f:
-                for item in all_urls:
-                    f.write(f"{item}\n")
 
-            print(f'✅ Total product pages to scrape: {len(all_urls)}\n')
+            print(f'✅ Total product pages to scrape: {len(all_urls)}')
 
-            # Scrape data from pages in parallel
-            print('📦 Scraping product data...')
-            semaphore = asyncio.Semaphore(15) 
-            
-            tasks = [self.scrape_product(browser, url, semaphore) for url in all_urls]
-            
+            # Retry config
+            max_attempts = 3
+            attempt = 1
+            urls_to_scrape = all_urls
             all_products = []
-            for coro in tqdm.as_completed(tasks, total=len(all_urls), desc='Scraping', unit='product'):
-                product_data = await coro
-                if product_data:
-                    all_products.append(product_data)
+
+            while urls_to_scrape and attempt <= max_attempts:
+                print(f'\n🔄 Attempt {attempt}/{max_attempts} - Processing {len(urls_to_scrape)} URLs')
+                
+                concurrency = 10 if attempt == 1 else 5
+                semaphore = asyncio.Semaphore(concurrency)
+                
+                # Scrape batch
+                successful, failed = await self.scrape_batch(browser, urls_to_scrape, semaphore)
+                all_products.extend(successful)
+                                
+                # Check for failures
+                if failed:
+                    print(f'⚠️  Failed: {len(failed)} URLs')
+                    
+                    if attempt < max_attempts:
+                        print(f'⏸️  Waiting 5 seconds before retry...')
+                        await asyncio.sleep(5)
+                        urls_to_scrape = failed
+                        attempt += 1
+                    else:
+                        print(f'\n❌ {len(failed)} URLs failed after all attempts:')
+                        for fail_url in failed[:5]:
+                            print(f'   - {fail_url[0]}')
+                        if len(failed) > 5:
+                            print(f'   ... and {len(failed) - 5} more')
+                        break
+                else:
+                    break
 
             if not self.headless:
                 input('\nPress Enter to close browser...')
             
             await browser.close()
+            
+            print(f'\n📊 Final Results:')
+            print(f'   Total products scraped: {len(all_products)}')
+            print(f'   Success rate: {len(all_products)}/{len(all_urls)} ({len(all_products)/len(all_urls)*100:.1f}%)')
+            
             return all_products
-                    
+                        
 if __name__ == '__main__':
-    scraper = FoodScraper(CATEGORIES, True)
+    scraper = FoodScraper(TEST_CATEGORIES, True)
     all_products = asyncio.run(scraper.scrape_page())

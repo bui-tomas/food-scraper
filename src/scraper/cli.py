@@ -1,6 +1,8 @@
 import click
 import asyncio
-from scraper import FoodScraper, Database, CATEGORIES
+from .config import CATEGORIES
+from .cenyslovensko_scraper import FoodScraper
+from .database import Database
 
 def delimit(message, number):
     print(f'\n\n### {number}. {message}')
