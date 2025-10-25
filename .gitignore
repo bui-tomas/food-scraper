@@ -1,0 +1,5 @@
+env
+.env
+tests
+src/scraper/__pycache__
+schema.sql
