@@ -3,6 +3,7 @@ import asyncio
 from .config import CATEGORIES
 from .cenyslovensko_scraper import FoodScraper
 from .database import Database
+from .notifier import Notifier
 
 def delimit(message, number):
     print(f'\n\n### {number}. {message}')
@@ -21,23 +22,33 @@ def scrape():
     Scrape prices from cenyslovensko.sk and save to database
     '''
     
-    click.echo(delimit('Scraping products', 1))
-    
-    # Scrape data
-    scraper = FoodScraper(CATEGORIES, headless=True)
-    all_products = asyncio.run(scraper.scrape_page())
+    notifier = Notifier()
+
+    try:
+        click.echo(delimit('Scraping products', 1))
         
-    # Save to database
-    if all_products:
-            async def save_data():
-                async with Database() as db:
-                    total_saved = await db.save_scraped_data(all_products)
-                    return total_saved
+        # Scrape data
+        scraper = FoodScraper(CATEGORIES, headless=True)
+        all_products, success_rate = asyncio.run(scraper.scrape_page())
             
-            total_saved = asyncio.run(save_data())
-            click.echo(f'✅ Saved {total_saved} price records to database')
-    else:
-        click.echo('⚠️  No products scraped')
+        # Save to database
+        async def save_data():
+            async with Database() as db:
+                total_saved = await db.save_scraped_data(all_products)
+                return total_saved
+        
+        total_saved = asyncio.run(save_data())
+        click.echo(f'✅ Saved {total_saved} price records to database')
+
+        if success_rate == 1.0:
+            notifier.send_success(len(all_products))
+        else:
+            notifier.send_partial_success(len(all_products), success_rate)
+
+    except Exception as e:
+        click.echo(f'❌ Error: {e}')
+        notifier.send_failure(str(e))
+        raise
 
 @cli.command()
 def test_db():
@@ -46,10 +57,34 @@ def test_db():
     '''
 
     try:
-        with Database() as db:
-            click.echo('✅ Database connection successful!')
+        async def test():
+            async with Database() as db:
+                return True
+        
+        asyncio.run(test())
+        click.echo('✅ Database connection successful!')
     except Exception as e:
         click.echo(f'❌ Database connection failed: {e}')
+        
+@cli.command()
+def test_telegram():
+    '''
+    Test Telegram notification
+    '''
+
+    notifier = Notifier()
+    
+    if not notifier.enabled:
+        click.echo('❌ Telegram not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env')
+        return
+    
+    click.echo('📤 Sending test notification...')
+    success = notifier.send_message('🧪 <b>Test notification</b>\n\nYour food scraper Telegram bot is working!')
+    
+    if success:
+        click.echo('✅ Test notification sent! Check your Telegram.')
+    else:
+        click.echo('❌ Failed to send notification. Check your credentials.')
 
 if __name__ == '__main__':
     cli()

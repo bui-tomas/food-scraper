@@ -285,14 +285,15 @@ class FoodScraper():
                         print(f'🛑 Stopping scraper - cannot continue without all categories')
                         await page.close()
                         await browser.close()
-                        return []
+                        raise RuntimeError(f'Failed to scrape urls for {cat} - cannot continue')
+
 
             await page.close()
 
             print(f'✅ Total product pages to scrape: {len(all_urls)}')
 
             # Retry config
-            max_attempts = 3
+            max_attempts = 5
             attempt = 1
             urls_to_scrape = all_urls
             all_products = []
@@ -332,10 +333,10 @@ class FoodScraper():
             await browser.close()
             
             print(f'\n📊 Final Results:')
-            print(f'   Total products scraped: {len(all_products)}')
-            print(f'   Success rate: {len(all_products)}/{len(all_urls)} ({len(all_products)/len(all_urls)*100:.1f}%)')
+            print(f'Total products scraped: {len(all_products)}')
+            print(f'Success rate: {len(all_products)}/{len(all_urls)} ({len(all_products)/len(all_urls)*100:.1f}%)')
             
-            return all_products
+            return all_products, len(all_products)/len(all_urls)
                         
 if __name__ == '__main__':
     scraper = FoodScraper(TEST_CATEGORIES, True)
