@@ -16,8 +16,8 @@ The scraper collects data from [cenyslovensko.sk](https://cenyslovensko.sk/), Sl
 ## Installation
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/slovak-food-prices.git
-   cd slovak-food-prices
+   git clone https://github.com/bui-tomas/food-scraper.git
+   cd food-scraper
    ```
 
 2. **Create virtual environment**
