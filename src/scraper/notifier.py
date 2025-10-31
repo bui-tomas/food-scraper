@@ -24,6 +24,7 @@ class Notifier:
         '''
         Send a message to Telegram
         '''
+
         if not self.enabled:
             return False
         
@@ -46,6 +47,7 @@ class Notifier:
         '''
         Send success notification
         '''
+
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         message = (
@@ -60,6 +62,7 @@ class Notifier:
         '''
         Send failure notification
         '''
+
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         error_message = error_message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -76,6 +79,7 @@ class Notifier:
         '''
         Send partial success notification (some failures but completed)
         '''
+        
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         message = (

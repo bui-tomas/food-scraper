@@ -13,6 +13,25 @@ SLEEP_MIN = 1.0
 SLEEP_MAX = 1.5
 RETRY_ATTEMPTS = 3
 
+SELECTORS = {
+    # Category page selectors
+    'product_image': 'img[alt^="Obrázok produktu"]',  
+    'pagination_button': 'button[aria-label^="Stránka"]',  
+    
+    # Product detail page selectors
+    'retailer_button': 'button[data-orientation="vertical"]:has(img[alt])', 
+    'accordion_container': 'div[role="region"][data-orientation="vertical"]',
+    'product_name': 'div > h3',
+    'product_details': 'dl',  # FRAGILE: Auto-generated class
+    
+    # Price selectors
+    'price_with_vat': 'div[aria-labelledby="header_price"] p strong',
+    'price_without_vat': 'div[aria-labelledby="header_priceWithoutTax"] p',
+    'unit_price': 'div[aria-labelledby="header_unitPrice"] p:not(.govuk-visually-hidden)',  
+    'discount_info': 'div[aria-labelledby="header_discount"] p',
+    'retailer_logo': 'img[alt]',
+}
+
 class FoodScraper():
     '''
     Food scraper for cenyslovensko.sk which scrapes prices, labels, sources etc.
@@ -34,11 +53,11 @@ class FoodScraper():
             product_urls = []
 
             # Find page count
-            pagination_count = await page.locator('button[aria-label^="Stránka"]').count()
+            pagination_count = await page.locator(SELECTORS['pagination_button']).count()
             if pagination_count == 0:
                 return None
 
-            last_button = page.locator('button[aria-label^="Stránka"]').nth(-1)
+            last_button = page.locator(SELECTORS['pagination_button']).nth(-1)
             aria_label = await last_button.get_attribute('aria-label')
                 
             match = re.search(r'Stránka (\d+)', aria_label)
@@ -56,15 +75,15 @@ class FoodScraper():
                     url = f'{base_url}{separator}currentPage={page_num}'
                 
                 await page.goto(url, wait_until='commit')
-                await page.wait_for_selector('div.sc-jvKoal.gTWuXg', timeout=TIMEOUT_SELECTOR)
+                await page.wait_for_selector(SELECTORS['product_image'], timeout=10000)
 
-                products = await page.locator('div.sc-jvKoal.gTWuXg').all()
-                
+                product_images = await page.locator(SELECTORS['product_image']).all()
+
                 # Extract href from each product
-                for product in products:
-                    link_element = product.locator('a strong').first
-                    parent_link = link_element.locator('..').first
-                    href = await parent_link.get_attribute('href')
+                for img in product_images:
+                    product_card = img.locator('xpath=..').first
+                    link = product_card.locator('a[href^="/detail/"]').first
+                    href = await link.get_attribute('href')
                                     
                     if href:
                         if href.startswith('http'):
@@ -90,18 +109,18 @@ class FoodScraper():
         all_retailer_data = []
 
         # Find all retailer buttons (accordion items)
-        retailer_buttons = await page.locator('button.sc-dTvVRJ.jLGMQZ').all()
+        retailer_buttons = await page.locator(SELECTORS['accordion_container']).first.locator(SELECTORS['retailer_button']).all()
                 
         for idx, button in enumerate(retailer_buttons):
             try:
                 retailer_data = {}
                 
                 # Extract data from collapsed button (always visible)
-                retailer_data['retailer'] = await button.locator('img[alt]').first.get_attribute('alt')
-                retailer_data['price_with_vat'] = await get_text(button, 'p strong')
-                retailer_data['price_without_vat'] = await get_text(button, 'p.sc-dntSTA.djIdwR.sc-cAnIvK.jUAbQe')
-                retailer_data['unit_price'] = await get_text(button, 'p.sc-dntSTA.djIdwR.sc-fYRIQK.hhKUxF')
-                retailer_data['discount_end_date'] = await get_text(button, 'div[aria-labelledby="header_discount"] p')
+                retailer_data['retailer'] = await button.locator(SELECTORS['retailer_logo']).first.get_attribute('alt')
+                retailer_data['price_with_vat'] = await get_text(button, SELECTORS['price_with_vat'])
+                retailer_data['price_without_vat'] = await get_text(button, SELECTORS['price_without_vat'])
+                retailer_data['unit_price'] = await get_text(button, SELECTORS['unit_price'])
+                retailer_data['discount_end_date'] = await get_text(button, SELECTORS['discount_info'])
                 
                 # Single retailer is already expanded by default
                 if len(retailer_buttons) > 1:
@@ -111,13 +130,12 @@ class FoodScraper():
                 panel = page.locator(f'#{panel_id}').first
 
                 if idx == 0:
-                    main_product_name = await get_text(panel, 'h3.sc-kcLKEh.llLrQu')
+                    main_product_name = await get_text(panel, SELECTORS['product_name'])
 
                 retailer_data['product_name'] = main_product_name
 
                 # Get all dt elements (labels)
-                dl_container = panel.locator('dl.sc-eBIPcU.byIRsI').first
-                dt_elements = await dl_container.locator('dt').all()
+                dt_elements = await panel.locator(SELECTORS['product_details']).first.locator('dt').all()
                 
                 for dt_elem in dt_elements:
                     try:
@@ -219,7 +237,7 @@ class FoodScraper():
             page = await browser.new_page()
             try:
                 await page.goto(url[0], wait_until='domcontentloaded')
-                await page.wait_for_selector('button.sc-dTvVRJ.jLGMQZ', state='attached', timeout=TIMEOUT_SELECTOR)
+                await page.wait_for_selector(SELECTORS['accordion_container'], state='attached', timeout=TIMEOUT_SELECTOR)
                 product_data = await self.extract_product_data(page, url)
                 return (True, product_data, url)
             except Exception as e:
@@ -287,7 +305,7 @@ class FoodScraper():
                 
                 for attempt in range(1, RETRY_ATTEMPTS + 1):
                     await page.goto(cat, wait_until='domcontentloaded')
-                    await page.wait_for_selector('img[alt^="Obrázok produktu"]', state='attached', timeout=TIMEOUT_SELECTOR)
+                    await page.wait_for_selector(SELECTORS['product_image'], state='attached', timeout=TIMEOUT_SELECTOR)
                     
                     urls = await self.scrape_urls(page, cat)
                     

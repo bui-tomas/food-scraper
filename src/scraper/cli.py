@@ -23,14 +23,17 @@ def scrape():
     '''
     
     notifier = Notifier()
+    notifier.send_message('📤 <b>Notification</b>\n\nStarting cron job!')
 
     try:
-        click.echo(delimit('Scraping products', 1))
+        delimit('Scraping products', 1)
         
         # Scrape data
         scraper = FoodScraper(CATEGORIES, headless=True)
         all_products, success_rate = asyncio.run(scraper.scrape_page())
-            
+        
+        delimit('Saving to DB', 2)
+
         # Save to database
         async def save_data():
             async with Database() as db:
@@ -65,7 +68,7 @@ def test_db():
         click.echo('✅ Database connection successful!')
     except Exception as e:
         click.echo(f'❌ Database connection failed: {e}')
-        
+
 @cli.command()
 def test_telegram():
     '''
