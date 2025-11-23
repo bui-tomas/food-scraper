@@ -70,49 +70,39 @@ class Database:
     async def get_or_create_product(self, product_data):
         '''
         Get existing product or create new one. Returns product_id.
+        Handles race conditions with ON CONFLICT.
         '''
-
         product_url = product_data['product_url']
         
         async with self.conn.cursor() as cur:
-            # Try to find existing product
-            await cur.execute(
-                'SELECT id FROM products WHERE product_url = %s',
-                (product_url,)
-            )
-            result = await cur.fetchone()
-            
-            if result:
-                # Update last_seen
+            try:
+                # Atomic insert-or-update using ON CONFLICT
                 await cur.execute(
-                    'UPDATE products SET last_seen = CURRENT_TIMESTAMP WHERE id = %s',
-                    (result['id'],)
+                    '''
+                    INSERT INTO products 
+                    (product_url, name, category, package_size, country_of_origin, 
+                    producer, distributor)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (product_url) 
+                    DO UPDATE SET last_seen = CURRENT_TIMESTAMP
+                    RETURNING id
+                    ''',
+                    (
+                        product_url,
+                        product_data.get('product_name'),
+                        product_data.get('category'),
+                        product_data.get('package_size'),
+                        product_data.get('country_of_origin'),
+                        product_data.get('producer'),
+                        product_data.get('distributor')
+                    )
                 )
                 await self.conn.commit()
-                return result['id']
-            
-            # Create new product
-            await cur.execute(
-                '''
-                INSERT INTO products 
-                (product_url, name, category, package_size, country_of_origin, 
-                 producer, distributor)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                ''',
-                (
-                    product_url,
-                    product_data.get('product_name'),
-                    product_data.get('category'),
-                    product_data.get('package_size'),
-                    product_data.get('country_of_origin'),
-                    product_data.get('producer'),
-                    product_data.get('distributor')
-                )
-            )
-            await self.conn.commit()
-            new_id = (await cur.fetchone())['id']
-            return new_id
+                product_id = (await cur.fetchone())['id']
+                return product_id
+            except Exception as e:
+                print(product_data)
+                raise
 
     async def insert_price(self, product_id, retailer_id, price_data, scrape_date):
         '''Insert or update price record.'''
@@ -141,7 +131,6 @@ class Database:
                     vat_rate = EXCLUDED.vat_rate,
                     discount_end_date = EXCLUDED.discount_end_date,
                     created_at = CURRENT_TIMESTAMP
-                RETURNING id
                 ''',
                 (
                     product_id, retailer_id,
@@ -161,7 +150,6 @@ class Database:
                 )
             )
             await self.conn.commit()
-            return (await cur.fetchone())['id']
 
     async def save_product(self, retailer_data_list, category):
         '''

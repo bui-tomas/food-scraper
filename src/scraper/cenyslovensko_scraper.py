@@ -6,12 +6,15 @@ import re
 import json
 from datetime import datetime
 from typing import Optional, Any
+from collections import Counter
 from .config import TEST_CATEGORIES
 
 TIMEOUT_SELECTOR = 10000
 SLEEP_MIN = 1.0
 SLEEP_MAX = 1.5
-RETRY_ATTEMPTS = 3
+RETRY_ATTEMPTS = 5
+WORKERS_MAX = 10
+WORKERS_MIN = 5
 
 SELECTORS = {
     # Category page selectors
@@ -22,7 +25,7 @@ SELECTORS = {
     'retailer_button': 'button[data-orientation="vertical"]:has(img[alt])', 
     'accordion_container': 'div[role="region"][data-orientation="vertical"]',
     'product_name': 'div > h3',
-    'product_details': 'dl',  # FRAGILE: Auto-generated class
+    'product_details': 'dl', 
     
     # Price selectors
     'price_with_vat': 'div[aria-labelledby="header_price"] p strong',
@@ -41,13 +44,13 @@ class FoodScraper():
         self.cats = cats
         self.headless = headless
 
-    async def scrape_urls(self, page: Page, base_url: str) -> Optional[list[tuple[str, str]]]:
+    async def scrape_urls(self, page: Page, base_url: str) -> Optional[list[str]]:
         '''
         Returns all individual product URLs for given category.
         '''
         
         try:
-            parts = base_url.rstrip("/").split("/")
+            parts = base_url.rstrip('/').split('/')
             cat = parts[-1]
 
             product_urls = []
@@ -103,7 +106,7 @@ class FoodScraper():
         Extract detailed data from individual product page
         '''
 
-        async def get_text(locator, selector):
+        async def get_text(locator: Locator, selector: str) -> str:
             return (await locator.locator(selector).first.text_content()).strip()
         
         all_retailer_data = []
@@ -301,11 +304,14 @@ class FoodScraper():
             for cat in self.cats:
                 print(f'Accessing {cat}...')
                 
+                page = await context.new_page()
+                
+                max_attempts = 3
                 urls = None
                 
-                for attempt in range(1, RETRY_ATTEMPTS + 1):
+                for attempt in range(1, max_attempts + 1):
                     await page.goto(cat, wait_until='domcontentloaded')
-                    await page.wait_for_selector(SELECTORS['product_image'], state='attached', timeout=TIMEOUT_SELECTOR)
+                    await page.wait_for_selector('img[alt^="Obrázok produktu"]', state='attached', timeout=10000)
                     
                     urls = await self.scrape_urls(page, cat)
                     
@@ -313,17 +319,26 @@ class FoodScraper():
                         all_urls.extend(urls)
                         break
                     else:
-                        if attempt < RETRY_ATTEMPTS:
+                        if attempt < max_attempts:
                             await asyncio.sleep(3)
                 
-                    if not urls:
-                        print(f'🛑 Stopping scraper - cannot continue without all categories')
-                        await page.close()
-                        await browser.close()
-                        raise RuntimeError(f'Failed to scrape urls for {cat} - cannot continue')
+                await page.close()
+                
+                if not urls:
+                    print(f'🛑 Stopping scraper - cannot continue without all categories')
+                    await browser.close()
+                    return []
 
 
             await page.close()
+
+            url_counts = Counter([url[0] for url in all_urls])
+            duplicates = {url: count for url, count in url_counts.items() if count > 1}
+            if duplicates:
+                print(f'⚠️  {len(duplicates)} products appear in multiple categories')
+                seen = set()
+                all_urls = [url for url in all_urls if url[0] not in seen and not seen.add(url[0])]
+                print(f'✅ Deduplicated to {len(all_urls)} unique products')
 
             print(f'✅ Total product pages to scrape: {len(all_urls)}')
 
@@ -335,7 +350,7 @@ class FoodScraper():
             while urls_to_scrape and attempt <= RETRY_ATTEMPTS:
                 print(f'\n🔄 Attempt {attempt}/{RETRY_ATTEMPTS} - Processing {len(urls_to_scrape)} URLs')
                 
-                concurrency = 10 if attempt == 1 else 5
+                concurrency = WORKERS_MAX if attempt == 1 else WORKERS_MIN
                 semaphore = asyncio.Semaphore(concurrency)
                 
                 # Scrape batch
