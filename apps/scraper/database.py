@@ -182,31 +182,15 @@ class Database:
         return saved_count
 
     async def save_scraped_data(self, all_products):
-        '''
-        Save all scraped products in parallel with progress bar.
-        
-        Args:
-            all_products: List of [retailer_data_list, ...] from scraper
-        
-        Returns:
-            Total number of prices saved
-        '''
-        from tqdm.asyncio import tqdm
-        
+        from tqdm import tqdm
+
         print('💾 Saving to database...')
-        
-        # Create tasks for parallel saving
-        coroutines = []
-        for product_retailers in all_products:
+
+        total_saved = 0
+        for product_retailers in tqdm(all_products, desc='Saving', unit='product'):
             if product_retailers:
                 category = product_retailers[0].get('category', 'unknown')
-                coro = self.save_product(product_retailers, category)
-                coroutines.append(coro)
-        
-        # Run all tasks in parallel with progress bar
-        total_saved = 0
-        for coro in tqdm.as_completed(coroutines, total=len(coroutines), desc='Saving', unit='product'):
-            saved_count = await coro
-            total_saved += saved_count
-        
+                saved_count = await self.save_product(product_retailers, category)
+                total_saved += saved_count
+
         return total_saved

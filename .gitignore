@@ -7,3 +7,4 @@ schema.sql
 src/DS_Store
 cron.sh
 food-scraper.log
+__pycache__

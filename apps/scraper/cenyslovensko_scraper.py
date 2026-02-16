@@ -78,7 +78,7 @@ class FoodScraper():
                     url = f'{base_url}{separator}currentPage={page_num}'
                 
                 await page.goto(url, wait_until='commit')
-                await page.wait_for_selector(SELECTORS['product_image'], timeout=10000)
+                await page.wait_for_selector(SELECTORS['product_image'], state='attached', timeout=10000)
 
                 product_images = await page.locator(SELECTORS['product_image']).all()
 
@@ -288,7 +288,8 @@ class FoodScraper():
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--no-sandbox',
-                    '--disable-setuid-sandbox'
+                    '--disable-setuid-sandbox',
+                    '--dns-prefetch-disable'
                 ]
             )
             context = await browser.new_context(
@@ -309,8 +310,8 @@ class FoodScraper():
                     
                     max_attempts = 3
                     for attempt in range(1, max_attempts + 1):
-                        await page.goto(cat, wait_until='domcontentloaded')
-                        await page.wait_for_selector('img[alt^="Obrázok produktu"]', state='attached', timeout=10000)
+                        await page.goto(cat, wait_until='domcontentloaded', timeout=60000)
+                        await page.wait_for_selector(SELECTORS['product_image'], state='attached', timeout=10000)
                         
                         urls = await self.scrape_urls(page, cat)
                         
